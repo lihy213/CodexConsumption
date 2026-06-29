@@ -1,0 +1,11 @@
+﻿build-native/
+*.pdb
+*.ilk
+*.obj
+*.iobj
+*.ipdb
+*.tlog
+*.log
+dist-native/usage-debug.log
+*.pptx
+.vs/
