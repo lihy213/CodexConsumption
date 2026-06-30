@@ -16,3 +16,10 @@
 - 修复任务栏遮挡 TrafficMonitor CPU/内存显示的问题：增加任务栏占位扫描和从右向左避让算法。
 - 增加鼠标悬浮提示：桌面悬浮和任务栏固定状态都显示 5h/1w 下一次刷新时间。
 - 整理项目 README、开发日志和 Git 忽略规则，准备上传 GitHub 仓库 CodexConsumption。
+
+## 2026-06-30
+
+- 修复桌面悬浮和任务栏固定状态下鼠标悬停不显示下一次刷新时间的问题。
+- 新增自绘 hover 提示窗口，不再依赖 Windows 默认 tooltip，避免任务栏/topmost/透明窗口组合下 tooltip 不弹出。
+- 鼠标移入 Codex 小工具时显示 5h 和 1w 的下一次刷新时间，鼠标离开时自动隐藏。
+- 重新编译 `dist-native\CodexAssumptionNative.exe`，并完成程序级窗口创建验证。

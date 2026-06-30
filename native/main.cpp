@@ -61,6 +61,8 @@ HINSTANCE g_instance = nullptr;
 HWND g_owner = nullptr;
 HWND g_status = nullptr;
 HWND g_tooltip = nullptr;
+HWND g_hoverTip = nullptr;
+bool g_trackingMouse = false;
 UINT g_taskbarCreated = 0;
 UsageState g_usage;
 Config g_config;
@@ -732,6 +734,95 @@ void DrawStatus(HDC hdc, const RECT& rc)
     DeleteObject(font);
 }
 
+
+void DrawHoverTip(HDC hdc, const RECT& rc)
+{
+    HBRUSH back = CreateSolidBrush(RGB(28, 38, 48));
+    FillRect(hdc, &rc, back);
+    DeleteObject(back);
+
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(245, 248, 250));
+    HFONT font = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
+    RECT textRc = rc;
+    textRc.left += 12;
+    textRc.top += 8;
+    textRc.right -= 12;
+    textRc.bottom -= 8;
+    std::wstring text = TooltipText();
+    DrawTextW(hdc, text.c_str(), -1, &textRc, DT_LEFT | DT_TOP | DT_NOPREFIX);
+    SelectObject(hdc, oldFont);
+    DeleteObject(font);
+}
+
+void HideHoverTip()
+{
+    if (g_hoverTip)
+        ShowWindow(g_hoverTip, SW_HIDE);
+    g_trackingMouse = false;
+}
+
+void ShowHoverTip(HWND owner, LPARAM lParam)
+{
+    if (!g_hoverTip)
+        return;
+
+    POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+    ClientToScreen(owner, &pt);
+    int width = 220;
+    int height = 78;
+    int x = pt.x + 14;
+    int y = pt.y + 18;
+
+    RECT work = WorkArea();
+    if (x + width > work.right)
+        x = pt.x - width - 14;
+    if (y + height > work.bottom)
+        y = pt.y - height - 14;
+    x = std::max(static_cast<int>(work.left), x);
+    y = std::max(static_cast<int>(work.top), y);
+
+    LONG_PTR style = GetWindowLongPtrW(g_hoverTip, GWL_STYLE);
+    style |= WS_POPUP | WS_VISIBLE;
+    SetWindowLongPtrW(g_hoverTip, GWL_STYLE, style);
+    LONG_PTR exStyle = GetWindowLongPtrW(g_hoverTip, GWL_EXSTYLE);
+    exStyle |= WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
+    SetWindowLongPtrW(g_hoverTip, GWL_EXSTYLE, exStyle);
+    SetWindowPos(g_hoverTip, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+    ShowWindow(g_hoverTip, SW_SHOWNOACTIVATE);
+    UpdateWindow(g_hoverTip);
+    InvalidateRect(g_hoverTip, nullptr, TRUE);
+
+    if (!g_trackingMouse)
+    {
+        TRACKMOUSEEVENT track{};
+        track.cbSize = sizeof(track);
+        track.dwFlags = TME_LEAVE;
+        track.hwndTrack = owner;
+        if (TrackMouseEvent(&track))
+            g_trackingMouse = true;
+    }
+}
+
+LRESULT CALLBACK HoverTipProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        DrawHoverTip(hdc, rc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+}
 LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
@@ -748,7 +839,11 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_MOUSEMOVE:
         UpdateTooltip();
+        ShowHoverTip(hwnd, lParam);
         return DefWindowProcW(hwnd, msg, wParam, lParam);
+    case WM_MOUSELEAVE:
+        HideHoverTip();
+        return 0;
     case WM_LBUTTONDOWN:
         if (!g_config.pinned)
         {
@@ -903,8 +998,16 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int)
     statusClass.lpszClassName = L"CodexAssumptionNative.Status";
     RegisterClassExW(&statusClass);
 
+    WNDCLASSEXW hoverClass{sizeof(WNDCLASSEXW)};
+    hoverClass.lpfnWndProc = HoverTipProc;
+    hoverClass.hInstance = instance;
+    hoverClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    hoverClass.lpszClassName = L"CodexAssumptionNative.HoverTip";
+    RegisterClassExW(&hoverClass);
+
     g_owner = CreateWindowExW(0, ownerClass.lpszClassName, L"CodexAssumptionNative", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, instance, nullptr);
     g_status = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, statusClass.lpszClassName, L"CodexAssumption", WS_POPUP, 0, 0, g_config.floatingWidth, g_config.floatingHeight, nullptr, nullptr, instance, nullptr);
+    g_hoverTip = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, hoverClass.lpszClassName, L"CodexAssumptionHoverTip", WS_POPUP, 0, 0, 220, 78, nullptr, nullptr, instance, nullptr);
 
     CreateTooltip();
     ApplyStatusPlacement();
@@ -917,28 +1020,4 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int)
     }
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
