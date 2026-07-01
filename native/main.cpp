@@ -953,6 +953,8 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_MOUSEMOVE:
         UpdateTooltip();
+        if (g_contextMenuOpen)
+            return DefWindowProcW(hwnd, msg, wParam, lParam);
         g_hoverPoint = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         if (!g_hoverTipVisible)
             SetTimer(g_owner, kHoverDelayTimer, 500, nullptr);
@@ -983,6 +985,8 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_RBUTTONUP:
     {
+        g_contextMenuOpen = true;
+        HideHoverTip();
         HMENU menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, kMenuRefresh, L"立即刷新");
         AppendMenuW(menu, MF_STRING, kMenuTogglePin, g_config.pinned ? L"取消固定到任务栏" : L"固定到任务栏");
@@ -990,7 +994,6 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         AppendMenuW(menu, MF_STRING, kMenuExit, L"退出");
         POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ClientToScreen(hwnd, &pt);
-        g_contextMenuOpen = true;
         HWINEVENTHOOK menuHook = SetWinEventHook(EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUPOPUPSTART, nullptr, ContextMenuEventProc, GetCurrentProcessId(), GetCurrentThreadId(), WINEVENT_OUTOFCONTEXT);
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
@@ -1053,7 +1056,8 @@ LRESULT CALLBACK OwnerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         else if (wParam == kHoverDelayTimer)
         {
             KillTimer(hwnd, kHoverDelayTimer);
-            ShowHoverTip(g_status, MAKELPARAM(g_hoverPoint.x, g_hoverPoint.y));
+            if (!g_contextMenuOpen)
+                ShowHoverTip(g_status, MAKELPARAM(g_hoverPoint.x, g_hoverPoint.y));
         }
         return 0;
     case kShowExisting:
