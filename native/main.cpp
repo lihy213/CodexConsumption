@@ -75,6 +75,7 @@ bool g_trackingMouse = false;
 POINT g_hoverPoint{};
 bool g_hoverTipVisible = false;
 bool g_contextMenuOpen = false;
+bool g_hiddenForFullscreen = false;
 UINT g_taskbarCreated = 0;
 UsageState g_usage;
 Config g_config;
@@ -870,6 +871,66 @@ void HideHoverTip()
     g_trackingMouse = false;
 }
 
+bool IsOwnWindow(HWND hwnd)
+{
+    return hwnd == g_status || hwnd == g_hoverTip || hwnd == g_owner;
+}
+
+bool IsIgnoredFullscreenClass(const std::wstring& className)
+{
+    return className == L"Shell_TrayWnd" || className == L"Shell_SecondaryTrayWnd" || className == L"Progman" || className == L"WorkerW" || className == L"#32768";
+}
+
+bool ForegroundWindowIsFullscreen()
+{
+    HWND foreground = GetForegroundWindow();
+    if (!foreground || IsOwnWindow(foreground) || !IsWindowVisible(foreground) || IsIconic(foreground))
+        return false;
+
+    wchar_t cls[256]{};
+    GetClassNameW(foreground, cls, 256);
+    if (IsIgnoredFullscreenClass(cls))
+        return false;
+
+    RECT windowRect{};
+    if (!GetWindowRect(foreground, &windowRect) || !RectHasArea(windowRect))
+        return false;
+
+    HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{sizeof(MONITORINFO)};
+    if (!monitor || !GetMonitorInfoW(monitor, &monitorInfo))
+        return false;
+
+    const RECT& monitorRect = monitorInfo.rcMonitor;
+    constexpr int tolerance = 2;
+    return windowRect.left <= monitorRect.left + tolerance &&
+           windowRect.top <= monitorRect.top + tolerance &&
+           windowRect.right >= monitorRect.right - tolerance &&
+           windowRect.bottom >= monitorRect.bottom - tolerance;
+}
+
+void UpdateFullscreenVisibility()
+{
+    bool shouldHide = ForegroundWindowIsFullscreen();
+    if (shouldHide)
+    {
+        if (!g_hiddenForFullscreen)
+        {
+            HideHoverTip();
+            if (g_status)
+                ShowWindow(g_status, SW_HIDE);
+            g_hiddenForFullscreen = true;
+        }
+        return;
+    }
+
+    if (g_hiddenForFullscreen)
+    {
+        g_hiddenForFullscreen = false;
+        ApplyStatusPlacement();
+    }
+}
+
 void ShowHoverTip(HWND owner, LPARAM lParam)
 {
     if (!g_hoverTip)
@@ -1051,12 +1112,16 @@ LRESULT CALLBACK OwnerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
         if (wParam == kRefreshTimer)
             StartRefresh();
-        else if (wParam == kPlacementTimer && g_config.pinned && !g_hoverTipVisible && !g_contextMenuOpen)
-            ApplyStatusPlacement();
+        else if (wParam == kPlacementTimer)
+        {
+            UpdateFullscreenVisibility();
+            if (!g_hiddenForFullscreen && g_config.pinned && !g_hoverTipVisible && !g_contextMenuOpen)
+                ApplyStatusPlacement();
+        }
         else if (wParam == kHoverDelayTimer)
         {
             KillTimer(hwnd, kHoverDelayTimer);
-            if (!g_contextMenuOpen)
+            if (!g_contextMenuOpen && !g_hiddenForFullscreen)
                 ShowHoverTip(g_status, MAKELPARAM(g_hoverPoint.x, g_hoverPoint.y));
         }
         return 0;
