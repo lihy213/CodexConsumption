@@ -970,7 +970,6 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_RBUTTONUP:
     {
-        HideHoverTip();
         HMENU menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, kMenuRefresh, L"立即刷新");
         AppendMenuW(menu, MF_STRING, kMenuTogglePin, g_config.pinned ? L"取消固定到任务栏" : L"固定到任务栏");
@@ -980,6 +979,8 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         ClientToScreen(hwnd, &pt);
         g_contextMenuOpen = true;
         SetWindowPos(g_status, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        if (g_hoverTipVisible && g_hoverTip)
+            SetWindowPos(g_hoverTip, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
         PostMessageW(hwnd, WM_NULL, 0, 0);
@@ -987,6 +988,8 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         DestroyMenu(menu);
         if (cmd != kMenuExit)
             ApplyStatusPlacement();
+        if (cmd != kMenuExit && g_hoverTipVisible && g_hoverTip)
+            SetWindowPos(g_hoverTip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         if (cmd)
             SendMessageW(g_owner, WM_COMMAND, cmd, 0);
         return 0;
