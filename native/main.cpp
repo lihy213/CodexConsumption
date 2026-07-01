@@ -74,6 +74,7 @@ HWND g_hoverTip = nullptr;
 bool g_trackingMouse = false;
 POINT g_hoverPoint{};
 bool g_hoverTipVisible = false;
+bool g_contextMenuOpen = false;
 UINT g_taskbarCreated = 0;
 UsageState g_usage;
 Config g_config;
@@ -969,6 +970,7 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_RBUTTONUP:
     {
+        HideHoverTip();
         HMENU menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, kMenuRefresh, L"立即刷新");
         AppendMenuW(menu, MF_STRING, kMenuTogglePin, g_config.pinned ? L"取消固定到任务栏" : L"固定到任务栏");
@@ -976,9 +978,15 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         AppendMenuW(menu, MF_STRING, kMenuExit, L"退出");
         POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ClientToScreen(hwnd, &pt);
+        g_contextMenuOpen = true;
+        SetWindowPos(g_status, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
+        PostMessageW(hwnd, WM_NULL, 0, 0);
+        g_contextMenuOpen = false;
         DestroyMenu(menu);
+        if (cmd != kMenuExit)
+            ApplyStatusPlacement();
         if (cmd)
             SendMessageW(g_owner, WM_COMMAND, cmd, 0);
         return 0;
@@ -1026,7 +1034,7 @@ LRESULT CALLBACK OwnerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
         if (wParam == kRefreshTimer)
             StartRefresh();
-        else if (wParam == kPlacementTimer && g_config.pinned && !g_hoverTipVisible)
+        else if (wParam == kPlacementTimer && g_config.pinned && !g_hoverTipVisible && !g_contextMenuOpen)
             ApplyStatusPlacement();
         else if (wParam == kHoverDelayTimer)
         {
