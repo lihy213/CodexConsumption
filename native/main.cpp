@@ -574,6 +574,14 @@ void ApplyRoundedRegion(HWND hwnd, int width, int height)
     SetWindowRgn(hwnd, region, TRUE);
 }
 
+void CALLBACK ContextMenuEventProc(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD, DWORD)
+{
+    wchar_t className[32]{};
+    GetClassNameW(hwnd, className, 32);
+    if (wcscmp(className, L"#32768") == 0)
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
 void UpdateTooltip()
 {
     if (!g_tooltip || !g_status)
@@ -959,6 +967,11 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     case WM_MOUSELEAVE:
+        if (g_contextMenuOpen)
+        {
+            g_trackingMouse = false;
+            return 0;
+        }
         HideHoverTip();
         return 0;
     case WM_LBUTTONDOWN:
@@ -978,18 +991,16 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ClientToScreen(hwnd, &pt);
         g_contextMenuOpen = true;
-        SetWindowPos(g_status, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-        if (g_hoverTipVisible && g_hoverTip)
-            SetWindowPos(g_hoverTip, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        HWINEVENTHOOK menuHook = SetWinEventHook(EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUPOPUPSTART, nullptr, ContextMenuEventProc, GetCurrentProcessId(), GetCurrentThreadId(), WINEVENT_OUTOFCONTEXT);
         SetForegroundWindow(hwnd);
         int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
         PostMessageW(hwnd, WM_NULL, 0, 0);
+        if (menuHook)
+            UnhookWinEvent(menuHook);
         g_contextMenuOpen = false;
         DestroyMenu(menu);
         if (cmd != kMenuExit)
             ApplyStatusPlacement();
-        if (cmd != kMenuExit && g_hoverTipVisible && g_hoverTip)
-            SetWindowPos(g_hoverTip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         if (cmd)
             SendMessageW(g_owner, WM_COMMAND, cmd, 0);
         return 0;
