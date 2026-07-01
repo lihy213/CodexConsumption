@@ -32,6 +32,14 @@ constexpr UINT kShowExisting = WM_APP + 11;
 constexpr UINT kMenuRefresh = 2001;
 constexpr UINT kMenuTogglePin = 2002;
 constexpr UINT kMenuExit = 2003;
+constexpr COLORREF kPanelBack = RGB(232, 246, 255);
+constexpr COLORREF kPanelBorder = RGB(134, 190, 226);
+constexpr COLORREF kPanelText = RGB(22, 70, 108);
+constexpr int kPanelRadius = 8;
+constexpr int kStatusPadX = 5;
+constexpr int kStatusPadY = 2;
+constexpr int kHoverPadX = 6;
+constexpr int kHoverPadY = 4;
 
 struct UsageItem
 {
@@ -494,6 +502,76 @@ std::wstring TooltipText()
     return L"下一次刷新时间\r\n5h: " + FormatReset(g_usage.fiveHour.resetAt) + L"\r\n1w: " + FormatReset(g_usage.weekly.resetAt);
 }
 
+std::wstring StatusLineText()
+{
+    if (g_usage.fiveHour.remainingPercent < 0 && g_usage.weekly.remainingPercent < 0 && g_usage.status != L"starting")
+        return L"Codex  " + g_usage.status;
+    return L"Codex  5h " + PercentText(g_usage.fiveHour) + L"  1w " + PercentText(g_usage.weekly);
+}
+
+HFONT CreateUiFont(int height, int weight)
+{
+    return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+}
+
+SIZE MeasureSingleLine(const std::wstring& text, HFONT font)
+{
+    HDC hdc = GetDC(nullptr);
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
+    SIZE size{};
+    GetTextExtentPoint32W(hdc, text.c_str(), static_cast<int>(text.size()), &size);
+    SelectObject(hdc, oldFont);
+    ReleaseDC(nullptr, hdc);
+    return size;
+}
+
+SIZE MeasureStatusSize()
+{
+    HFONT font = CreateUiFont(g_config.pinned ? 16 : 20, FW_BOLD);
+    SIZE size{};
+    if (g_config.pinned)
+    {
+        SIZE first = MeasureSingleLine(L"5h  " + PercentText(g_usage.fiveHour), font);
+        SIZE second = MeasureSingleLine(L"1w  " + PercentText(g_usage.weekly), font);
+        size.cx = std::max(static_cast<int>(first.cx), static_cast<int>(second.cx)) + kStatusPadX * 2;
+        size.cy = first.cy + second.cy + kStatusPadY * 2;
+        size.cx = std::max(static_cast<int>(size.cx), 76);
+        size.cy = std::max(static_cast<int>(size.cy), 34);
+    }
+    else
+    {
+        SIZE text = MeasureSingleLine(StatusLineText(), font);
+        size.cx = text.cx + kStatusPadX * 2;
+        size.cy = text.cy + kStatusPadY * 2;
+        size.cx = std::max(static_cast<int>(size.cx), 150);
+        size.cy = std::max(static_cast<int>(size.cy), 30);
+    }
+    DeleteObject(font);
+    return size;
+}
+
+SIZE MeasureHoverTipSize()
+{
+    HFONT font = CreateUiFont(16, FW_NORMAL);
+    HDC hdc = GetDC(nullptr);
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
+    RECT calc{0, 0, 320, 0};
+    std::wstring text = TooltipText();
+    DrawTextW(hdc, text.c_str(), -1, &calc, DT_LEFT | DT_TOP | DT_NOPREFIX | DT_CALCRECT);
+    SelectObject(hdc, oldFont);
+    ReleaseDC(nullptr, hdc);
+    DeleteObject(font);
+    return SIZE{(calc.right - calc.left) + kHoverPadX * 2, (calc.bottom - calc.top) + kHoverPadY * 2};
+}
+
+void ApplyRoundedRegion(HWND hwnd, int width, int height)
+{
+    if (!hwnd)
+        return;
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, kPanelRadius, kPanelRadius);
+    SetWindowRgn(hwnd, region, TRUE);
+}
+
 void UpdateTooltip()
 {
     if (!g_tooltip || !g_status)
@@ -634,8 +712,9 @@ void ApplyStatusPlacement()
     if (!g_status)
         return;
 
-    int width = g_config.pinned ? g_config.pinnedWidth : g_config.floatingWidth;
-    int height = g_config.floatingHeight;
+    SIZE measured = MeasureStatusSize();
+    int width = measured.cx;
+    int height = measured.cy;
 
     if (g_config.pinned && g_config.nativeEmbed && g_embed.Embed(g_status, width, height))
     {
@@ -663,6 +742,7 @@ void ApplyStatusPlacement()
         SetWindowLongPtrW(g_status, GWL_EXSTYLE, exStyle);
         SetLayeredWindowAttributes(g_status, 0, 255, LWA_ALPHA);
         SetParent(g_status, nullptr);
+        ApplyRoundedRegion(g_status, width, height);
         SetWindowPos(g_status, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
         ShowWindow(g_status, SW_SHOWNOACTIVATE);
         InvalidateRect(g_status, nullptr, TRUE);
@@ -682,6 +762,7 @@ void ApplyStatusPlacement()
     SetWindowLongPtrW(g_status, GWL_EXSTYLE, exStyle);
     SetLayeredWindowAttributes(g_status, 0, 255, LWA_ALPHA);
     SetParent(g_status, nullptr);
+    ApplyRoundedRegion(g_status, width, height);
     SetWindowPos(g_status, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
     ShowWindow(g_status, SW_SHOWNOACTIVATE);
     InvalidateRect(g_status, nullptr, TRUE);
@@ -699,37 +780,42 @@ void StartRefresh()
 
 void DrawStatus(HDC hdc, const RECT& rc)
 {
-    HBRUSH back = CreateSolidBrush(RGB(238, 255, 230));
-    HBRUSH border = CreateSolidBrush(RGB(122, 202, 104));
-    FillRect(hdc, &rc, back);
-    FrameRect(hdc, &rc, border);
-    DeleteObject(back);
+    HBRUSH back = CreateSolidBrush(kPanelBack);
+    HPEN border = CreatePen(PS_SOLID, 1, kPanelBorder);
+    HBRUSH oldBrush = static_cast<HBRUSH>(SelectObject(hdc, back));
+    HPEN oldPen = static_cast<HPEN>(SelectObject(hdc, border));
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, kPanelRadius, kPanelRadius);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
     DeleteObject(border);
+    DeleteObject(back);
 
     SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(0, 45, 55));
-    HFONT font = CreateFontW(g_config.pinned ? 17 : 20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+    SetTextColor(hdc, kPanelText);
+    HFONT font = CreateUiFont(g_config.pinned ? 16 : 20, FW_BOLD);
     HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
 
-    std::wstring text;
-    UINT format = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
     if (g_config.pinned)
     {
         RECT first = rc;
         RECT second = rc;
-        first.left += 8;
+        first.left += kStatusPadX;
+        first.right -= kStatusPadX;
+        first.top += kStatusPadY;
         first.bottom = rc.top + (rc.bottom - rc.top) / 2;
-        second.left += 8;
+        second.left += kStatusPadX;
+        second.right -= kStatusPadX;
         second.top = first.bottom;
+        second.bottom -= kStatusPadY;
         DrawTextW(hdc, (L"5h  " + PercentText(g_usage.fiveHour)).c_str(), -1, &first, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         DrawTextW(hdc, (L"1w  " + PercentText(g_usage.weekly)).c_str(), -1, &second, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
     else
     {
-        text = L"Codex  5h " + PercentText(g_usage.fiveHour) + L"   1w " + PercentText(g_usage.weekly);
-        if (g_usage.fiveHour.remainingPercent < 0 && g_usage.weekly.remainingPercent < 0 && g_usage.status != L"starting")
-            text = L"Codex  " + g_usage.status;
-        DrawTextW(hdc, text.c_str(), -1, const_cast<RECT*>(&rc), format);
+        RECT textRc = rc;
+        textRc.left += kStatusPadX;
+        textRc.right -= kStatusPadX;
+        DrawTextW(hdc, StatusLineText().c_str(), -1, &textRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
     SelectObject(hdc, oldFont);
@@ -739,22 +825,25 @@ void DrawStatus(HDC hdc, const RECT& rc)
 
 void DrawHoverTip(HDC hdc, const RECT& rc)
 {
-    HBRUSH back = CreateSolidBrush(RGB(232, 246, 255));
-    HBRUSH border = CreateSolidBrush(RGB(142, 196, 228));
-    FillRect(hdc, &rc, back);
-    FrameRect(hdc, &rc, border);
-    DeleteObject(back);
+    HBRUSH back = CreateSolidBrush(kPanelBack);
+    HPEN border = CreatePen(PS_SOLID, 1, kPanelBorder);
+    HBRUSH oldBrush = static_cast<HBRUSH>(SelectObject(hdc, back));
+    HPEN oldPen = static_cast<HPEN>(SelectObject(hdc, border));
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, kPanelRadius, kPanelRadius);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
     DeleteObject(border);
+    DeleteObject(back);
 
     SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(24, 72, 108));
-    HFONT font = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+    SetTextColor(hdc, kPanelText);
+    HFONT font = CreateUiFont(16, FW_NORMAL);
     HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
     RECT textRc = rc;
-    textRc.left += 12;
-    textRc.top += 8;
-    textRc.right -= 12;
-    textRc.bottom -= 8;
+    textRc.left += kHoverPadX;
+    textRc.top += kHoverPadY;
+    textRc.right -= kHoverPadX;
+    textRc.bottom -= kHoverPadY;
     std::wstring text = TooltipText();
     DrawTextW(hdc, text.c_str(), -1, &textRc, DT_LEFT | DT_TOP | DT_NOPREFIX);
     SelectObject(hdc, oldFont);
@@ -777,8 +866,9 @@ void ShowHoverTip(HWND owner, LPARAM lParam)
 
     POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     ClientToScreen(owner, &pt);
-    int width = 230;
-    int height = 78;
+    SIZE measured = MeasureHoverTipSize();
+    int width = measured.cx;
+    int height = measured.cy;
     int x = pt.x + 14;
     int y = pt.y + 18;
 
@@ -796,6 +886,7 @@ void ShowHoverTip(HWND owner, LPARAM lParam)
     LONG_PTR exStyle = GetWindowLongPtrW(g_hoverTip, GWL_EXSTYLE);
     exStyle |= WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
     SetWindowLongPtrW(g_hoverTip, GWL_EXSTYLE, exStyle);
+    ApplyRoundedRegion(g_hoverTip, width, height);
     SetWindowPos(g_hoverTip, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
     ShowWindow(g_hoverTip, SW_SHOWNOACTIVATE);
     UpdateWindow(g_hoverTip);
