@@ -73,6 +73,7 @@ HWND g_tooltip = nullptr;
 HWND g_hoverTip = nullptr;
 bool g_trackingMouse = false;
 POINT g_hoverPoint{};
+bool g_hoverTipVisible = false;
 UINT g_taskbarCreated = 0;
 UsageState g_usage;
 Config g_config;
@@ -854,6 +855,7 @@ void HideHoverTip()
 {
     if (g_hoverTip)
         ShowWindow(g_hoverTip, SW_HIDE);
+    g_hoverTipVisible = false;
     if (g_status)
         KillTimer(g_owner, kHoverDelayTimer);
     g_trackingMouse = false;
@@ -862,6 +864,8 @@ void HideHoverTip()
 void ShowHoverTip(HWND owner, LPARAM lParam)
 {
     if (!g_hoverTip)
+        return;
+    if (g_hoverTipVisible && IsWindowVisible(g_hoverTip))
         return;
 
     POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -884,11 +888,12 @@ void ShowHoverTip(HWND owner, LPARAM lParam)
     style |= WS_POPUP | WS_VISIBLE;
     SetWindowLongPtrW(g_hoverTip, GWL_STYLE, style);
     LONG_PTR exStyle = GetWindowLongPtrW(g_hoverTip, GWL_EXSTYLE);
-    exStyle |= WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
+    exStyle |= WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
     SetWindowLongPtrW(g_hoverTip, GWL_EXSTYLE, exStyle);
     ApplyRoundedRegion(g_hoverTip, width, height);
     SetWindowPos(g_hoverTip, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
     ShowWindow(g_hoverTip, SW_SHOWNOACTIVATE);
+    g_hoverTipVisible = true;
     UpdateWindow(g_hoverTip);
     InvalidateRect(g_hoverTip, nullptr, TRUE);
 
@@ -907,6 +912,8 @@ LRESULT CALLBACK HoverTipProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
     case WM_PAINT:
     {
         PAINTSTRUCT ps{};
@@ -938,7 +945,8 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_MOUSEMOVE:
         UpdateTooltip();
         g_hoverPoint = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        SetTimer(g_owner, kHoverDelayTimer, 500, nullptr);
+        if (!g_hoverTipVisible)
+            SetTimer(g_owner, kHoverDelayTimer, 500, nullptr);
         if (!g_trackingMouse)
         {
             TRACKMOUSEEVENT track{};
@@ -1018,7 +1026,7 @@ LRESULT CALLBACK OwnerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
         if (wParam == kRefreshTimer)
             StartRefresh();
-        else if (wParam == kPlacementTimer && g_config.pinned)
+        else if (wParam == kPlacementTimer && g_config.pinned && !g_hoverTipVisible)
             ApplyStatusPlacement();
         else if (wParam == kHoverDelayTimer)
         {
